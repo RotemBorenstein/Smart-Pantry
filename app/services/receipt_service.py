@@ -85,4 +85,18 @@ class ReceiptService:
         """Delete a receipt (cascade deletes items)"""
         response = self.supabase.table("receipts").delete().eq("receipt_id", str(receipt_id)).execute()
         return len(response.data) > 0
+    
+    def create_receipt_item(self, receipt_id: str, item_data: dict) -> dict:
+        """Create a receipt item"""
+        data = {
+            "receipt_id": receipt_id,
+            "raw_label": item_data.get("detected_name", ""),
+            "product_id": item_data.get("product_id"),
+            "quantity": float(item_data.get("quantity", 1)),
+            "unit_price": float(item_data["unit_price"]) if item_data.get("unit_price") else None,
+            "total_price": float(item_data["total_price"]) if item_data.get("total_price") else None,
+            "match_confidence": item_data.get("confidence", 0.9),
+        }
+        response = self.supabase.table("receipt_items").insert(data).execute()
+        return response.data[0] if response.data else {}
 

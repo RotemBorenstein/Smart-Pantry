@@ -4,7 +4,7 @@ FastAPI main application
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.api import inventory, products, receipts, shopping_lists, habits, predictor
+from app.api import inventory, products, receipts, shopping_lists, habits, predictor, stats
 
 # Create FastAPI app
 app = FastAPI(
@@ -29,6 +29,7 @@ app.include_router(receipts.router, prefix=settings.api_prefix)
 app.include_router(shopping_lists.router, prefix=settings.api_prefix)
 app.include_router(habits.router, prefix=settings.api_prefix)
 app.include_router(predictor.router, prefix=settings.api_prefix)
+app.include_router(stats.router, prefix=settings.api_prefix)
 
 
 @app.get("/")

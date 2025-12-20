@@ -39,9 +39,51 @@ class SupabasePantryRepository:
         """Get active predictor profile for user"""
         result = self.supabase.table("predictor_profiles").select("*").eq("user_id", user_id).eq("is_active", True).limit(1).execute()
         if not result.data:
-            # Create default profile if none exists
+            # Create default profile with category-specific priors
             default_config = {
-                "category_priors": {},
+                "category_priors": {
+                    # Dairy & Eggs - חלב וביצים (7 ימים)
+                    "f434dbe4-6d14-40c3-b845-157a6e07eaa3": {"mean_days": 7.0, "mad_days": 2.0},
+                    
+                    # Bread & Bakery - לחם ומאפים (5 ימים)
+                    "247755bd-9c8a-4a85-8cb5-15f296d3f434": {"mean_days": 5.0, "mad_days": 2.0},
+                    
+                    # Bread - לחם (5 ימים)
+                    "e3f118c0-510e-4572-9112-f118a3326056": {"mean_days": 5.0, "mad_days": 2.0},
+                    
+                    # Vegetables - ירקות (5 ימים)
+                    "302d4036-14b8-45e0-b5ef-9b865df23d15": {"mean_days": 5.0, "mad_days": 2.0},
+                    
+                    # Fruits - פירות (4 ימים)
+                    "959f3f6c-174f-417a-80b1-7083f748275b": {"mean_days": 4.0, "mad_days": 1.5},
+                    
+                    # Meat & Poultry - בשר ועוף (3-4 ימים)
+                    "bc5c6890-3361-406d-a533-f7f2564ac72d": {"mean_days": 3.5, "mad_days": 1.0},
+                    
+                    # Fish & Seafood - דגים ופירות ים (2-3 ימים)
+                    "ca76f11c-aaff-4161-8168-ecefb57830f4": {"mean_days": 2.5, "mad_days": 1.0},
+                    
+                    # Snacks - חטיפים (14 ימים)
+                    "be81897f-0403-434e-969a-6412ed191641": {"mean_days": 14.0, "mad_days": 5.0},
+                    
+                    # Beverages - משקאות (14 ימים)
+                    "cbc24f9c-7ed8-4aef-904c-01d96c8abdc5": {"mean_days": 14.0, "mad_days": 5.0},
+                    
+                    # Frozen Foods - מוצרים קפואים (45 ימים)
+                    "a98838f4-694c-40ff-87e9-5494dc8f9b21": {"mean_days": 45.0, "mad_days": 15.0},
+                    
+                    # Grains & Pasta - דגנים ופסטה (60 ימים)
+                    "bae7026d-4c9f-4a9b-a884-4749f84e5f33": {"mean_days": 60.0, "mad_days": 20.0},
+                    
+                    # Spices & Seasonings - תבלינים (90 ימים)
+                    "62173c03-780f-4bfd-9669-d1c9f04678d8": {"mean_days": 90.0, "mad_days": 30.0},
+                    
+                    # Condiments & Sauces - רטבים ותבלינים נוזליים (90 ימים)
+                    "c9040cfc-3aa9-41d3-830d-e354757f54a5": {"mean_days": 90.0, "mad_days": 30.0},
+                    
+                    # Canned & Jarred - שימורים וצנצנות (120 ימים)
+                    "c80d18b4-2f29-4c4c-993c-8ab7d505ead2": {"mean_days": 120.0, "mad_days": 40.0},
+                },
                 "alpha_strong": 0.25,
                 "alpha_weak": 0.10,
                 "alpha_confirm": 0.05,
@@ -55,7 +97,7 @@ class SupabasePantryRepository:
             }
             result = self.supabase.table("predictor_profiles").insert({
                 "user_id": user_id,
-                "name": "Default Profile",
+                "name": "Smart Pantry AI Profile",
                 "method": "EMA",
                 "config": default_config,
                 "is_active": True,
@@ -219,8 +261,17 @@ class PredictorService:
         """Load or initialize predictor state"""
         row = self.repo.get_predictor_state(user_id, product_id)
         if row is None:
+            # Initialize new state from category prior
             st = init_state_from_category(category_id, cfg, now=now)
             st.category_id = str(category_id) if category_id else None
+            
+            # Debug: Show which prior was used
+            prior = cfg.category_priors.get(str(category_id)) if category_id else None
+            if prior:
+                print(f"[+] Initialized product {product_id[:8]} with category prior: {prior.mean_days} days (category: {category_id[:8]})")
+            else:
+                print(f"[+] Initialized product {product_id[:8]} with default prior: 7.0 days (no category or unknown category)")
+            
             return st
         
         params_json, _conf, _updated_at, _ppid = row

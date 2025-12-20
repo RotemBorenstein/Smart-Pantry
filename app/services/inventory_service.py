@@ -100,11 +100,24 @@ class InventoryService:
                     "note": f"State changed from {old_state} to {new_state} via UI",
                 }
                 try:
-                    self.supabase.table("inventory_log").insert(log_data).execute()
-                    print(f"Log entry created: {old_state} -> {new_state}")
+                    log_result = self.supabase.table("inventory_log").insert(log_data).execute()
+                    print(f"[+] Log entry created: {old_state} -> {new_state}")
+                    
+                    # Trigger predictor update immediately after logging
+                    if log_result.data and len(log_result.data) > 0:
+                        try:
+                            from app.services.predictor_service import PredictorService
+                            predictor_service = PredictorService(self.supabase)
+                            predictor_service.learn_from_manual_change(
+                                user_id=str(user_id),
+                                product_id=str(product_id)
+                            )
+                            print(f"[+] Predictor updated after inventory log")
+                        except Exception as pred_err:
+                            print(f"[!] Warning: Could not update predictor: {pred_err}")
                 except Exception as e:
                     # Log error but don't fail the update
-                    print(f"Error logging inventory change: {e}")
+                    print(f"[!] Error logging inventory change: {e}")
         
         return updated_item
     
@@ -114,7 +127,7 @@ class InventoryService:
         return len(response.data) > 0
     
     def create_inventory_log(self, user_id: UUID, log: InventoryLogCreate) -> dict:
-        """Create an inventory log entry"""
+        """Create an inventory log entry and trigger predictor update"""
         data = {
             "user_id": str(user_id),
             "product_id": str(log.product_id),
@@ -127,6 +140,20 @@ class InventoryService:
             "note": log.note,
         }
         response = self.supabase.table("inventory_log").insert(data).execute()
+        
+        # Trigger predictor update after creating log
+        if response.data and len(response.data) > 0:
+            try:
+                from app.services.predictor_service import PredictorService
+                predictor_service = PredictorService(self.supabase)
+                predictor_service.learn_from_manual_change(
+                    user_id=str(user_id),
+                    product_id=str(log.product_id)
+                )
+                print(f"[+] Predictor updated after creating inventory log")
+            except Exception as pred_err:
+                print(f"[!] Warning: Could not update predictor: {pred_err}")
+        
         return response.data[0] if response.data else {}
     
     def get_inventory_logs(self, user_id: UUID, product_id: Optional[UUID] = None, limit: int = 100) -> List[dict]:

@@ -19,6 +19,10 @@ class ProductService:
         response = self.supabase.table("product_categories").select("*").execute()
         return response.data if response.data else []
     
+    def get_all_categories(self) -> List[dict]:
+        """Get all categories (alias for get_categories)"""
+        return self.get_categories()
+    
     def get_category(self, category_id: UUID) -> Optional[dict]:
         """Get a specific category"""
         response = self.supabase.table("product_categories").select("*").eq("category_id", str(category_id)).execute()
@@ -48,6 +52,10 @@ class ProductService:
             query = query.eq("category_id", str(category_id))
         response = query.execute()
         return response.data if response.data else []
+    
+    def get_all_products(self) -> List[dict]:
+        """Get all products (alias for get_products with no filter)"""
+        return self.get_products()
     
     def get_product(self, product_id: UUID) -> Optional[dict]:
         """Get a specific product"""

@@ -5,12 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,
 from typing import List
 from uuid import UUID
 from supabase import Client
-import os
 
 from app.db.supabase_client import get_supabase
 from app.services.receipt_service import ReceiptService
 from app.services.receipt_processing_service import ReceiptProcessingService
 from app.schemas.receipt import ReceiptCreate, ReceiptResponse
+from app.core.config import settings
 
 router = APIRouter(prefix="/receipts", tags=["receipts"])
 
@@ -22,8 +22,7 @@ def get_receipt_service(supabase: Client = Depends(get_supabase)) -> ReceiptServ
 
 def get_receipt_processing_service(supabase: Client = Depends(get_supabase)) -> ReceiptProcessingService:
     """Dependency to get receipt processing service"""
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    return ReceiptProcessingService(supabase, openai_api_key)
+    return ReceiptProcessingService(supabase, settings.openai_api_key)
 
 
 @router.get("", response_model=List[ReceiptResponse])

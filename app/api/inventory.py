@@ -54,10 +54,40 @@ def get_inventory_item(
 def create_inventory(
     user_id: UUID,
     inventory: InventoryCreate,
-    service: InventoryService = Depends(get_inventory_service)
+    background_tasks: BackgroundTasks,
+    service: InventoryService = Depends(get_inventory_service),
+    predictor_service: PredictorService = Depends(get_predictor_service)
 ):
     """Create or update an inventory item"""
     item = service.create_inventory(user_id, inventory)
+    
+    # Create inventory log entry for the new item
+    from app.models.enums import InventoryAction
+    log_data = {
+        "user_id": str(user_id),
+        "product_id": str(inventory.product_id),
+        "action": InventoryAction.PURCHASE.value,
+        "delta_state": inventory.state.value,
+        "action_confidence": inventory.confidence if inventory.confidence else 1.0,
+        "source": inventory.last_source.value,
+        "note": f"New inventory item created with state {inventory.state.value}",
+    }
+    try:
+        from app.db.supabase_client import get_supabase
+        supabase = next(get_supabase())
+        log_result = supabase.table("inventory_log").insert(log_data).execute()
+        
+        # Trigger predictor to process this log entry
+        if log_result.data and len(log_result.data) > 0:
+            log_id = log_result.data[0].get("log_id")
+            background_tasks.add_task(
+                predictor_service.process_inventory_log,
+                log_id=str(log_id)
+            )
+            print(f"[+] Created log entry and scheduled predictor update for new inventory item")
+    except Exception as e:
+        print(f"[!] Error creating log or scheduling predictor: {e}")
+    
     return item
 
 
@@ -86,8 +116,8 @@ def update_inventory(
         try:
             background_tasks.add_task(
                 predictor_service.learn_from_manual_change,
-                user_id=user_id,
-                product_id=product_id
+                user_id=str(user_id),
+                product_id=str(product_id)
             )
         except Exception as e:
             print(f"Error scheduling predictor update: {e}")
@@ -111,10 +141,24 @@ def delete_inventory(
 def create_inventory_log(
     user_id: UUID,
     log: InventoryLogCreate,
-    service: InventoryService = Depends(get_inventory_service)
+    background_tasks: BackgroundTasks,
+    service: InventoryService = Depends(get_inventory_service),
+    predictor_service: PredictorService = Depends(get_predictor_service)
 ):
-    """Create an inventory log entry"""
+    """Create an inventory log entry and trigger predictor update"""
     log_entry = service.create_inventory_log(user_id, log)
+    
+    # ALWAYS trigger predictor update when a log is created
+    try:
+        background_tasks.add_task(
+            predictor_service.learn_from_manual_change,
+            user_id=str(user_id),
+            product_id=str(log.product_id)
+        )
+        print(f"[+] Scheduled predictor update for log entry: user={user_id}, product={log.product_id}")
+    except Exception as e:
+        print(f"[!] Error scheduling predictor update: {e}")
+    
     return log_entry
 
 
