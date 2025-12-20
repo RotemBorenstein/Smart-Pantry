@@ -39,7 +39,7 @@ pip install -r requirements.txt
 ### 2. התקנת תלויות Frontend
 
 ```bash
-npm install
+npm install in  smart-pantry-new 
 ```
 
 ### 3. הגדרת משתני סביבה
