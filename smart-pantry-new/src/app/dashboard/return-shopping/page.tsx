@@ -5,27 +5,12 @@ import { DashboardLayout } from '@/components/layouts/DashboardLayout'
 import { Camera, Upload, CheckCircle, XCircle, Loader2, Package, Plus, Minus } from 'lucide-react'
 import axios from 'axios'
 import { useAuthStore } from '@/store/useAuthStore'
-<<<<<<< Current (Your changes)
 
 interface ScannedItem {
   product_id: string
   product_name: string
   detected_name: string
   quantity: number
-=======
-import { DashboardLayout } from '@/components/layouts/DashboardLayout'
-import { api } from '@/lib/api'
-import { useDropzone } from 'react-dropzone'
-import { Upload, Receipt, Edit, Check, X, Plus, Minus } from 'lucide-react'
-
-interface ReceiptItem {
-  receipt_item_id?: string
-  raw_label: string
-  normalized_label?: string
-  product_id?: string
-  quantity?: number
-  unit?: string
->>>>>>> Incoming (Background Agent changes)
   unit_price?: number
   total_price?: number
   category?: string

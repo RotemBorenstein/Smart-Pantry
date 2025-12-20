@@ -31,12 +31,22 @@ export default function LoginPage() {
             data: {
               username,
             },
+            emailRedirectTo: `${window.location.origin}/dashboard`,
           },
         })
 
-        if (error) throw error
+        if (error) {
+          console.error('Signup error:', error)
+          throw error
+        }
 
-        if (data.user) {
+        // Check if email confirmation is required
+        if (data.user && !data.session) {
+          setError('Please check your email to confirm your account before signing in.')
+          return
+        }
+
+        if (data.user && data.session) {
           setUser(data.user)
           setSession(data.session)
           router.push('/user-profile')
@@ -56,7 +66,21 @@ export default function LoginPage() {
         }
       }
     } catch (err: any) {
-      setError(err.message)
+      console.error('Auth error:', err)
+      // Provide more helpful error messages
+      let errorMessage = err.message || 'An error occurred'
+      
+      if (err.status === 401 || err.message?.includes('Invalid API key')) {
+        errorMessage = 'Authentication failed. Please check your Supabase configuration.'
+      } else if (err.message?.includes('Password')) {
+        errorMessage = err.message
+      } else if (err.message?.includes('email')) {
+        errorMessage = err.message
+      } else if (err.message?.includes('User already registered')) {
+        errorMessage = 'This email is already registered. Please sign in instead.'
+      }
+      
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }

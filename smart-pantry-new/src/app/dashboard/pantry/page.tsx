@@ -38,11 +38,8 @@ export default function PantryPage() {
   const { user, loading } = useAuthStore()
   const [inventory, setInventory] = useState<InventoryItem[]>([])
   const [loadingInventory, setLoadingInventory] = useState(true)
-<<<<<<< Updated upstream
-=======
-  const [notification, setNotification] = useState<string | null>(null)
+    const [notification, setNotification] = useState<string | null>(null)
   const [isError, setIsError] = useState(false)
->>>>>>> Stashed changes
 
   useEffect(() => {
     if (!loading && !user) {
@@ -73,11 +70,6 @@ export default function PantryPage() {
       await api.put(`/inventory/${productId}?user_id=${user?.id}`, {
         state: newState,
       })
-<<<<<<< Updated upstream
-      loadInventory()
-    } catch (error) {
-      console.error('Error updating state:', error)
-=======
       
       // Show simple success notification
       setIsError(false)
@@ -97,7 +89,6 @@ export default function PantryPage() {
         setNotification(null)
         setIsError(false)
       }, 2000)
->>>>>>> Stashed changes
     }
   }
 
@@ -173,12 +164,6 @@ export default function PantryPage() {
 
   return (
     <DashboardLayout>
-<<<<<<< Updated upstream
-      <div className="px-4 py-6 sm:px-0">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">Pantry</h1>
-          <div className="flex space-x-2">
-=======
       <div className="px-4 py-6 sm:px-0 max-w-7xl mx-auto">
         {/* Notification Toast */}
         {notification && (
@@ -207,14 +192,6 @@ export default function PantryPage() {
           </div>
           <div className="flex gap-3">
             <button
-              onClick={loadInventory}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-lg"
-            >
-              <RefreshCw className="h-4 w-4" />
-              Refresh
-            </button>
->>>>>>> Stashed changes
-            <button
               onClick={() => router.push('/dashboard/pantry/add')}
               className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center text-sm font-medium transition-colors"
             >
@@ -223,9 +200,10 @@ export default function PantryPage() {
             </button>
             <button
               onClick={loadInventory}
-              className="bg-gray-100 text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-200 flex items-center text-sm transition-colors"
+              className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
             >
               <RefreshCw className="h-4 w-4" />
+              Refresh
             </button>
           </div>
         </div>

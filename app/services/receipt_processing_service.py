@@ -191,12 +191,8 @@ class ReceiptProcessingService:
                     "delta_state": "FULL",
                     "action_confidence": 1.0,
                     "source": "RECEIPT",
-<<<<<<< Updated upstream
-                    "note": f"Added from receipt (quantity: {quantity})"
-=======
                     "receipt_item_id": receipt_item.get("receipt_item_id"),
                     "note": f"Purchased {quantity} units from receipt"
->>>>>>> Stashed changes
                 }
                 self.supabase.table("inventory_log").insert(log_entry).execute()
             

@@ -2,7 +2,7 @@
 Application configuration for Supabase API
 """
 from pydantic_settings import BaseSettings
-from typing import Optional
+from typing import Optional, List
 
 
 class Settings(BaseSettings):
@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
     
     # CORS
-    cors_origins: list[str] = ["*"]
+    cors_origins: List[str] = ["*"]
     
     class Config:
         env_file = ".env"
