@@ -46,3 +46,39 @@ def refresh_predictions(
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
+@router.get("/forecast/{user_id}/{product_id}")
+def get_product_forecast(
+    user_id: UUID,
+    product_id: UUID,
+    supabase: Client = Depends(get_supabase)
+):
+    """Get the latest forecast for a specific product"""
+    try:
+        # Get the latest forecast from inventory_forecasts table
+        response = supabase.table("inventory_forecasts").select("*").eq(
+            "user_id", str(user_id)
+        ).eq(
+            "product_id", str(product_id)
+        ).order("generated_at", desc=True).limit(1).execute()
+        
+        if response.data and len(response.data) > 0:
+            forecast = response.data[0]
+            return {
+                "forecast_id": forecast.get("forecast_id"),
+                "expected_days_left": forecast.get("expected_days_left"),
+                "predicted_state": forecast.get("predicted_state"),
+                "confidence": forecast.get("confidence"),
+                "generated_at": forecast.get("generated_at")
+            }
+        else:
+            # No forecast found, return default
+            return {
+                "expected_days_left": 0,
+                "predicted_state": "UNKNOWN",
+                "confidence": 0.0,
+                "generated_at": None
+            }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to get forecast: {str(e)}")
+

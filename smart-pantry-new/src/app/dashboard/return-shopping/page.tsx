@@ -5,27 +5,12 @@ import { DashboardLayout } from '@/components/layouts/DashboardLayout'
 import { Camera, Upload, CheckCircle, XCircle, Loader2, Package, Plus, Minus } from 'lucide-react'
 import axios from 'axios'
 import { useAuthStore } from '@/store/useAuthStore'
-<<<<<<< Current (Your changes)
 
 interface ScannedItem {
   product_id: string
   product_name: string
   detected_name: string
   quantity: number
-=======
-import { DashboardLayout } from '@/components/layouts/DashboardLayout'
-import { api } from '@/lib/api'
-import { useDropzone } from 'react-dropzone'
-import { Upload, Receipt, Edit, Check, X, Plus, Minus } from 'lucide-react'
-
-interface ReceiptItem {
-  receipt_item_id?: string
-  raw_label: string
-  normalized_label?: string
-  product_id?: string
-  quantity?: number
-  unit?: string
->>>>>>> Incoming (Background Agent changes)
   unit_price?: number
   total_price?: number
   category?: string
@@ -54,6 +39,9 @@ export default function ReturnShoppingPage() {
   const [isConfirming, setIsConfirming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  const [showAddProduct, setShowAddProduct] = useState(false)
+  const [allProducts, setAllProducts] = useState<any[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -127,6 +115,61 @@ export default function ReturnShoppingPage() {
       matched_items: updatedItems
     })
     setSelectedItems(updatedItems.filter(item => item.isSelected))
+  }
+
+  const removeItem = (productId: string) => {
+    if (!scanResult) return
+
+    const updatedItems = scanResult.matched_items.filter(item => item.product_id !== productId)
+    
+    setScanResult({
+      ...scanResult,
+      matched_items: updatedItems,
+      stats: {
+        ...scanResult.stats,
+        total_items: updatedItems.length
+      }
+    })
+    setSelectedItems(updatedItems.filter(item => item.isSelected))
+  }
+
+  const loadProducts = async () => {
+    try {
+      const response = await axios.get('http://localhost:8000/api/v1/products')
+      setAllProducts(response.data)
+    } catch (error) {
+      console.error('Error loading products:', error)
+    }
+  }
+
+  const addProductToList = (product: any) => {
+    if (!scanResult) return
+
+    const newItem: ScannedItem = {
+      product_id: product.product_id,
+      product_name: product.product_name,
+      detected_name: product.product_name,
+      quantity: 1,
+      category: product.category_name,
+      confidence: 1.0,
+      match_score: 1.0,
+      is_new_product: false,
+      isSelected: true
+    }
+
+    const updatedItems = [...scanResult.matched_items, newItem]
+    
+    setScanResult({
+      ...scanResult,
+      matched_items: updatedItems,
+      stats: {
+        ...scanResult.stats,
+        total_items: updatedItems.length
+      }
+    })
+    setSelectedItems([...selectedItems, newItem])
+    setShowAddProduct(false)
+    setSearchQuery('')
   }
 
   const handleConfirm = async () => {
@@ -315,12 +358,13 @@ export default function ReturnShoppingPage() {
 
                         <div className="flex items-center justify-between">
                           <div className="flex items-center space-x-4">
-                            {/* Quantity Controls */}
-                            <div className="flex items-center space-x-2">
+                            {/* Quantity Controls - More Visible */}
+                            <div className="flex items-center space-x-2 bg-gradient-to-r from-blue-50 to-indigo-50 px-4 py-2 rounded-xl border-2 border-blue-200">
+                              <span className="text-sm font-semibold text-gray-700">Quantity:</span>
                               <button
                                 onClick={() => updateItemQuantity(item.product_id, -0.5)}
                                 disabled={!item.isSelected}
-                                className="p-1 rounded-lg bg-gray-200 hover:bg-gray-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                                className="p-1.5 rounded-lg bg-blue-200 hover:bg-blue-300 disabled:opacity-30 disabled:cursor-not-allowed text-blue-800 font-bold"
                               >
                                 <Minus className="h-4 w-4" />
                               </button>
@@ -330,7 +374,7 @@ export default function ReturnShoppingPage() {
                               <button
                                 onClick={() => updateItemQuantity(item.product_id, 0.5)}
                                 disabled={!item.isSelected}
-                                className="p-1 rounded-lg bg-gray-200 hover:bg-gray-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                                className="p-1.5 rounded-lg bg-blue-200 hover:bg-blue-300 disabled:opacity-30 disabled:cursor-not-allowed text-blue-800 font-bold"
                               >
                                 <Plus className="h-4 w-4" />
                               </button>
@@ -342,27 +386,16 @@ export default function ReturnShoppingPage() {
                                 ${item.total_price.toFixed(2)}
                               </span>
                             )}
-
-                            {/* Category */}
-                            {item.category && (
-                              <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                                {item.category}
-                              </span>
-                            )}
                           </div>
 
-                          {/* Confidence Badge */}
-                          <span
-                            className={`text-xs px-2 py-1 rounded-full ${
-                              item.confidence >= 0.9
-                                ? 'bg-green-100 text-green-700'
-                                : item.confidence >= 0.7
-                                ? 'bg-yellow-100 text-yellow-700'
-                                : 'bg-orange-100 text-orange-700'
-                            }`}
+                          {/* Remove Button */}
+                          <button
+                            onClick={() => removeItem(item.product_id)}
+                            className="p-2 rounded-lg bg-red-100 hover:bg-red-200 text-red-600 transition-colors"
+                            title="Remove item"
                           >
-                            {(item.confidence * 100).toFixed(0)}% confident
-                          </span>
+                            <XCircle className="h-5 w-5" />
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -370,31 +403,83 @@ export default function ReturnShoppingPage() {
                 ))}
               </div>
 
-              {/* Action Buttons */}
-              <div className="flex items-center justify-between mt-6 pt-6 border-t">
+              {/* Add Product Button */}
+              <div className="mt-6">
+                {!showAddProduct ? (
+                  <button
+                    onClick={() => {
+                      setShowAddProduct(true)
+                      loadProducts()
+                    }}
+                    className="w-full py-3 border-2 border-dashed border-gray-300 rounded-xl text-gray-600 hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50 transition-all flex items-center justify-center gap-2 font-medium"
+                  >
+                    <Plus className="h-5 w-5" />
+                    Add More Products
+                  </button>
+                ) : (
+                  <div className="border-2 border-blue-300 rounded-xl p-4 bg-blue-50">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="font-semibold text-gray-900">Add Product</h4>
+                      <button
+                        onClick={() => {
+                          setShowAddProduct(false)
+                          setSearchQuery('')
+                        }}
+                        className="text-gray-500 hover:text-gray-700"
+                      >
+                        <XCircle className="h-5 w-5" />
+                      </button>
+                    </div>
+                    
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search products..."
+                      className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-gray-900 mb-3"
+                    />
+
+                    <div className="max-h-60 overflow-y-auto space-y-2">
+                      {allProducts
+                        .filter((product) =>
+                          product.product_name.toLowerCase().includes(searchQuery.toLowerCase())
+                        )
+                        .map((product) => (
+                          <button
+                            key={product.product_id}
+                            onClick={() => addProductToList(product)}
+                            className="w-full text-left px-4 py-3 bg-white hover:bg-blue-100 rounded-lg border border-gray-200 hover:border-blue-300 transition-colors"
+                          >
+                            <p className="font-medium text-gray-900">{product.product_name}</p>
+                            <p className="text-sm text-gray-500">{product.category_name}</p>
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Confirm Button */}
+              <div className="mt-6 flex gap-4">
                 <button
                   onClick={() => setScanResult(null)}
-                  className="px-6 py-3 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+                  className="flex-1 py-3 px-6 bg-gray-200 text-gray-700 rounded-xl hover:bg-gray-300 font-medium transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleConfirm}
-                  disabled={isConfirming || selectedItems.length === 0}
-                  className={`px-8 py-3 font-medium rounded-lg text-white transition-all duration-200 ${
-                    isConfirming || selectedItems.length === 0
-                      ? 'bg-gray-400 cursor-not-allowed'
-                      : 'bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 shadow-lg hover:shadow-xl'
-                  }`}
+                  disabled={selectedItems.length === 0 || isConfirming}
+                  className="flex-1 py-3 px-6 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl hover:from-green-700 hover:to-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-all shadow-lg flex items-center justify-center gap-2"
                 >
                   {isConfirming ? (
                     <>
-                      <Loader2 className="inline animate-spin mr-2 h-5 w-5" />
+                      <Loader2 className="h-5 w-5 animate-spin" />
                       Adding to Pantry...
                     </>
                   ) : (
                     <>
-                      <CheckCircle className="inline mr-2 h-5 w-5" />
+                      <CheckCircle className="h-5 w-5" />
                       Add {selectedItems.length} Items to Pantry
                     </>
                   )}

@@ -5,7 +5,24 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuthStore } from '@/store/useAuthStore'
 import { DashboardLayout } from '@/components/layouts/DashboardLayout'
 import { api } from '@/lib/api'
-import { Check, X, Plus, ShoppingBag } from 'lucide-react'
+import { 
+  Check, 
+  X, 
+  Plus, 
+  ShoppingBag, 
+  Clock, 
+  ChevronUp, 
+  ChevronDown,
+  Edit2,
+  Trash2
+} from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+
+interface Product {
+  product_id: string
+  product_name: string
+  category_name?: string
+}
 
 interface ShoppingItem {
   shopping_list_item_id: string
@@ -13,8 +30,10 @@ interface ShoppingItem {
   free_text_name: string | null
   recommended_qty: number | null
   unit: string | null
+  user_qty_override: number | null
   status: string
-  quantity?: number
+  products?: Product
+  durationDays?: number
 }
 
 export default function ShoppingActivePage() {
@@ -26,6 +45,10 @@ export default function ShoppingActivePage() {
   const [loadingItems, setLoadingItems] = useState(true)
   const [showFinishDialog, setShowFinishDialog] = useState(false)
   const [unboughtItems, setUnboughtItems] = useState<ShoppingItem[]>([])
+  const [selectedUnboughtIds, setSelectedUnboughtIds] = useState<Set<string>>(new Set())
+  const [showAddItem, setShowAddItem] = useState(false)
+  const [newItemText, setNewItemText] = useState('')
+  const [shoppingFrequency, setShoppingFrequency] = useState(7) // Default 7 days
 
   useEffect(() => {
     if (!loading && !user) {
@@ -36,14 +59,35 @@ export default function ShoppingActivePage() {
   useEffect(() => {
     if (user && listId) {
       loadItems()
+      loadUserPreferences()
     }
   }, [user, listId])
+
+  const loadUserPreferences = async () => {
+    try {
+      const response = await api.get(`/habits/preferences?user_id=${user?.id}`)
+      if (response.data?.shopping_frequency) {
+        // Parse shopping frequency (e.g., "WEEKLY" -> 7 days)
+        const freq = response.data.shopping_frequency
+        if (freq === 'WEEKLY') setShoppingFrequency(7)
+        else if (freq === 'BI_WEEKLY') setShoppingFrequency(14)
+        else if (freq === 'MONTHLY') setShoppingFrequency(30)
+      }
+    } catch (error) {
+      console.error('Error loading user preferences:', error)
+    }
+  }
 
   const loadItems = async () => {
     try {
       setLoadingItems(true)
       const response = await api.get(`/shopping-lists/${listId}/items`)
-      setItems(response.data)
+      // Add default duration days to each item
+      const itemsWithDuration = response.data.map((item: ShoppingItem) => ({
+        ...item,
+        durationDays: shoppingFrequency,
+      }))
+      setItems(itemsWithDuration)
     } catch (error) {
       console.error('Error loading items:', error)
     } finally {
@@ -57,7 +101,7 @@ export default function ShoppingActivePage() {
       await api.put(`/shopping-lists/items/${item.shopping_list_item_id}`, {
         status: newStatus,
       })
-      loadItems()
+      await loadItems()
     } catch (error) {
       console.error('Error updating item:', error)
     }
@@ -68,169 +112,381 @@ export default function ShoppingActivePage() {
       await api.put(`/shopping-lists/items/${itemId}`, {
         user_qty_override: quantity,
       })
-      loadItems()
+      await loadItems()
     } catch (error) {
       console.error('Error updating quantity:', error)
+    }
+  }
+
+  const adjustDuration = (itemId: string, increase: boolean) => {
+    setItems((prevItems) =>
+      prevItems.map((item) => {
+        if (item.shopping_list_item_id === itemId) {
+          const currentDuration = item.durationDays || shoppingFrequency
+          const newDuration = increase
+            ? currentDuration + 3
+            : Math.max(1, currentDuration - 3)
+          return { ...item, durationDays: newDuration }
+        }
+        return item
+      })
+    )
+  }
+
+  const addNewItem = async () => {
+    if (!newItemText.trim()) return
+    
+    try {
+      await api.post(`/shopping-lists/${listId}/items`, {
+        free_text_name: newItemText.trim(),
+        status: 'PLANNED',
+        added_by: 'USER',
+      })
+      setNewItemText('')
+      setShowAddItem(false)
+      await loadItems()
+    } catch (error) {
+      console.error('Error adding item:', error)
     }
   }
 
   const handleFinishShopping = () => {
     const unbought = items.filter((item) => item.status !== 'BOUGHT')
     setUnboughtItems(unbought)
+    setSelectedUnboughtIds(new Set(unbought.map((item) => item.shopping_list_item_id)))
     setShowFinishDialog(true)
   }
 
-  const handleAddToNextList = async (itemIds: string[]) => {
-    // Add selected items to next shopping list
-    // This would create a new list or add to existing
-    setShowFinishDialog(false)
-    router.push('/dashboard/shopping')
+  const toggleUnboughtSelection = (itemId: string) => {
+    setSelectedUnboughtIds((prev) => {
+      const newSet = new Set(prev)
+      if (newSet.has(itemId)) {
+        newSet.delete(itemId)
+      } else {
+        newSet.add(itemId)
+      }
+      return newSet
+    })
   }
+
+  const handleCompleteShopping = async () => {
+    try {
+      // Mark list as completed
+      await api.put(`/shopping-lists/${listId}`, {
+        status: 'COMPLETED',
+      })
+
+      // If there are selected unbought items, create a new list for next time
+      if (selectedUnboughtIds.size > 0) {
+        const nextListResponse = await api.post(`/shopping-lists?user_id=${user?.id}`, {
+          title: `Next Shopping List - ${new Date().toLocaleDateString('en-US')}`,
+          status: 'DRAFT',
+        })
+
+        const nextListId = nextListResponse.data.shopping_list_id
+
+        // Add selected items to the next list
+        const selectedItems = Array.from(selectedUnboughtIds)
+        for (const itemId of selectedItems) {
+          const item = unboughtItems.find((i) => i.shopping_list_item_id === itemId)
+          if (item) {
+            await api.post(`/shopping-lists/${nextListId}/items`, {
+              product_id: item.product_id || null,
+              free_text_name: item.free_text_name || null,
+              recommended_qty: item.recommended_qty,
+              unit: item.unit,
+              status: 'PLANNED',
+              added_by: 'SYSTEM',
+            })
+          }
+        }
+      }
+
+      // Redirect to shopping page
+      router.push('/dashboard/shopping')
+    } catch (error) {
+      console.error('Error completing shopping:', error)
+    }
+  }
+
+  const boughtCount = items.filter((item) => item.status === 'BOUGHT').length
+  const totalCount = items.length
+  const progress = totalCount > 0 ? (boughtCount / totalCount) * 100 : 0
 
   if (loading || !user) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
       </div>
     )
   }
 
   return (
     <DashboardLayout>
-      <div className="px-4 py-6 sm:px-0">
-        <h1 className="text-3xl font-bold text-gray-900 mb-6">אני בקניות</h1>
+      <div className="px-4 py-6 sm:px-0 max-w-5xl mx-auto">
+        {/* Header */}
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-8"
+        >
+          <h1 className="text-4xl font-bold text-gray-900 mb-3 flex items-center gap-3">
+            <ShoppingBag className="h-10 w-10 text-green-600" />
+            Active Shopping
+          </h1>
+          <p className="text-gray-600">Check off items as you shop</p>
+        </motion.div>
+
+        {/* Progress Bar */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="bg-white shadow-xl rounded-2xl p-6 mb-6 border border-gray-200"
+        >
+          <div className="flex justify-between items-center mb-3">
+            <span className="text-lg font-semibold text-gray-900">Shopping Progress</span>
+            <span className="text-sm font-medium text-gray-600">
+              {boughtCount} / {totalCount} items
+            </span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+            <motion.div
+              initial={{ width: 0 }}
+              animate={{ width: `${progress}%` }}
+              transition={{ duration: 0.5 }}
+              className="bg-gradient-to-r from-green-500 to-emerald-500 h-full rounded-full"
+            />
+          </div>
+        </motion.div>
 
         {loadingItems ? (
           <div className="flex justify-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
           </div>
         ) : (
           <>
-            <div className="bg-white shadow rounded-lg p-6 mb-6">
+            {/* Items List */}
+            <div className="bg-white shadow-xl rounded-2xl p-6 mb-6 border border-gray-200">
               <div className="space-y-3">
-                {items.map((item) => (
-                  <div
-                    key={item.shopping_list_item_id}
-                    className={`flex items-center justify-between p-4 rounded-lg border-2 ${
-                      item.status === 'BOUGHT'
-                        ? 'bg-green-50 border-green-200'
-                        : 'bg-white border-gray-200'
-                    }`}
-                  >
-                    <div className="flex items-center flex-1">
-                      <button
-                        onClick={() => toggleItem(item)}
-                        className={`w-6 h-6 rounded-full border-2 flex items-center justify-center mr-4 ${
-                          item.status === 'BOUGHT'
-                            ? 'bg-green-500 border-green-500'
-                            : 'border-gray-300'
-                        }`}
-                      >
-                        {item.status === 'BOUGHT' && (
-                          <Check className="h-4 w-4 text-white" />
-                        )}
-                      </button>
-                      <div className="flex-1">
-                        <span
-                          className={
-                            item.status === 'BOUGHT' ? 'line-through text-gray-500' : ''
-                          }
-                        >
-                          {item.free_text_name || 'מוצר'}
-                        </span>
-                        {item.recommended_qty && (
-                          <span className="text-sm text-gray-500 mr-2">
-                            ({item.recommended_qty} {item.unit || ''})
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {item.status === 'BOUGHT' && (
-                      <div className="flex items-center space-x-2 space-x-reverse">
-                        <input
-                          type="number"
-                          min="1"
-                          placeholder="כמות"
-                          defaultValue={item.quantity || item.recommended_qty || 1}
-                          onChange={(e) =>
-                            updateQuantity(
-                              item.shopping_list_item_id,
-                              parseInt(e.target.value)
-                            )
-                          }
-                          className="w-20 px-2 py-1 border border-gray-300 rounded text-sm text-gray-900 placeholder:text-gray-400"
-                        />
-                        <span className="text-sm text-gray-500">
-                          {item.unit || 'יח'}
-                        </span>
-                      </div>
-                    )}
-
-                    <div className="mr-4 text-sm text-gray-500">
-                      {/* Duration indicator - would be calculated based on shopping frequency */}
-                      <span>יספיק ל-7 ימים</span>
-                    </div>
+                {items.length === 0 ? (
+                  <div className="text-center py-12">
+                    <ShoppingBag className="h-16 w-16 text-gray-300 mx-auto mb-3" />
+                    <p className="text-gray-500">No items in your list</p>
                   </div>
-                ))}
+                ) : (
+                  items.map((item) => (
+                    <motion.div
+                      key={item.shopping_list_item_id}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      className={`p-4 rounded-xl border-2 transition-all ${
+                        item.status === 'BOUGHT'
+                          ? 'bg-green-50 border-green-300'
+                          : 'bg-white border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <div className="flex items-start gap-4">
+                        {/* Checkbox */}
+                        <button
+                          onClick={() => toggleItem(item)}
+                          className={`mt-1 w-7 h-7 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                            item.status === 'BOUGHT'
+                              ? 'bg-green-500 border-green-500 scale-110'
+                              : 'border-gray-400 hover:border-green-500'
+                          }`}
+                        >
+                          {item.status === 'BOUGHT' && (
+                            <Check className="h-5 w-5 text-white font-bold" />
+                          )}
+                        </button>
+
+                        {/* Item Info */}
+                        <div className="flex-1">
+                          <div className="flex justify-between items-start mb-2">
+                            <div>
+                              <p
+                                className={`font-semibold text-lg ${
+                                  item.status === 'BOUGHT'
+                                    ? 'line-through text-gray-500'
+                                    : 'text-gray-900'
+                                }`}
+                              >
+                                {item.products?.product_name || item.free_text_name}
+                              </p>
+                              {item.products?.category_name && (
+                                <p className="text-sm text-gray-500">{item.products.category_name}</p>
+                              )}
+                            </div>
+
+                            {/* Quantity */}
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg font-medium text-gray-900 px-3 py-1 bg-gray-100 rounded-lg">
+                                {item.user_qty_override || item.recommended_qty || 1} {item.unit || 'unit'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Duration Indicator */}
+                          {item.status === 'BOUGHT' && (
+                            <div className="flex items-center gap-3 mt-3 p-3 bg-blue-50 rounded-lg">
+                              <Clock className="h-5 w-5 text-blue-600" />
+                              <div className="flex-1">
+                                <p className="text-sm font-medium text-gray-700">
+                                  Will last for: {item.durationDays || shoppingFrequency} days
+                                </p>
+                              </div>
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => adjustDuration(item.shopping_list_item_id, false)}
+                                  className="p-1 rounded-lg bg-orange-100 hover:bg-orange-200 text-orange-600"
+                                  title="Less time"
+                                >
+                                  <ChevronDown className="h-5 w-5" />
+                                </button>
+                                <button
+                                  onClick={() => adjustDuration(item.shopping_list_item_id, true)}
+                                  className="p-1 rounded-lg bg-green-100 hover:bg-green-200 text-green-600"
+                                  title="More time"
+                                >
+                                  <ChevronUp className="h-5 w-5" />
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))
+                )}
               </div>
+
+              {/* Add Item Button */}
+              {!showAddItem ? (
+                <button
+                  onClick={() => setShowAddItem(true)}
+                  className="w-full mt-4 py-3 border-2 border-dashed border-gray-300 rounded-xl text-gray-600 hover:border-blue-500 hover:text-blue-600 transition-all flex items-center justify-center gap-2"
+                >
+                  <Plus className="h-5 w-5" />
+                  Add Item
+                </button>
+              ) : (
+                <div className="mt-4 flex gap-2">
+                  <input
+                    type="text"
+                    value={newItemText}
+                    onChange={(e) => setNewItemText(e.target.value)}
+                    placeholder="Item name..."
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        addNewItem()
+                      }
+                    }}
+                    className="flex-1 px-4 py-3 border-2 border-blue-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
+                    autoFocus
+                  />
+                  <button
+                    onClick={addNewItem}
+                    className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700"
+                  >
+                    <Check className="h-5 w-5" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowAddItem(false)
+                      setNewItemText('')
+                    }}
+                    className="px-6 py-3 bg-gray-200 text-gray-700 rounded-xl hover:bg-gray-300"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+              )}
             </div>
 
+            {/* Finish Shopping Button */}
             <div className="flex justify-end">
               <button
                 onClick={handleFinishShopping}
-                className="bg-primary-600 text-white px-8 py-3 rounded-md hover:bg-primary-700 flex items-center text-lg"
+                className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-8 py-4 rounded-xl hover:from-green-700 hover:to-emerald-700 flex items-center gap-3 text-lg font-semibold shadow-xl hover:shadow-2xl transition-all"
               >
-                <ShoppingBag className="h-5 w-5 ml-2" />
-                סיימתי קניות
+                <ShoppingBag className="h-6 w-6" />
+                Finish Shopping
               </button>
             </div>
           </>
         )}
 
-        {showFinishDialog && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-              <h2 className="text-xl font-semibold mb-4">
-                הוסף מוצרים שלא קנית לרשימה הבאה?
-              </h2>
-              <div className="space-y-2 max-h-60 overflow-y-auto mb-4">
-                {unboughtItems.map((item) => (
-                  <label
-                    key={item.shopping_list_item_id}
-                    className="flex items-center p-2 hover:bg-gray-50 rounded"
+        {/* Finish Dialog */}
+        <AnimatePresence>
+          {showFinishDialog && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+              onClick={() => setShowFinishDialog(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h2 className="text-2xl font-bold text-gray-900 mb-4">
+                  Items You Didn't Buy
+                </h2>
+                
+                {unboughtItems.length === 0 ? (
+                  <div className="text-center py-8">
+                    <Check className="h-16 w-16 text-green-500 mx-auto mb-3" />
+                    <p className="text-gray-600">You bought everything!</p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-gray-600 mb-4">
+                      Would you like to add these items to your next shopping list?
+                    </p>
+                    <div className="space-y-2 max-h-60 overflow-y-auto mb-6">
+                      {unboughtItems.map((item) => (
+                        <label
+                          key={item.shopping_list_item_id}
+                          className="flex items-center p-3 hover:bg-gray-50 rounded-lg cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedUnboughtIds.has(item.shopping_list_item_id)}
+                            onChange={() => toggleUnboughtSelection(item.shopping_list_item_id)}
+                            className="w-5 h-5 text-blue-600 rounded"
+                          />
+                          <span className="ml-3 text-gray-900">
+                            {item.products?.product_name || item.free_text_name}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowFinishDialog(false)}
+                    className="flex-1 px-4 py-3 border-2 border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 font-medium"
                   >
-                    <input
-                      type="checkbox"
-                      defaultChecked
-                      className="ml-2 h-4 w-4 text-primary-600"
-                    />
-                    <span>{item.free_text_name || 'מוצר'}</span>
-                  </label>
-                ))}
-              </div>
-              <div className="flex justify-end space-x-2 space-x-reverse">
-                <button
-                  onClick={() => setShowFinishDialog(false)}
-                  className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
-                >
-                  ביטול
-                </button>
-                <button
-                  onClick={() => {
-                    const selected = unboughtItems.map((i) => i.shopping_list_item_id)
-                    handleAddToNextList(selected)
-                  }}
-                  className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700"
-                >
-                  הוסף לרשימה הבאה
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleCompleteShopping}
+                    className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-medium"
+                  >
+                    Complete
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </DashboardLayout>
   )
 }
-

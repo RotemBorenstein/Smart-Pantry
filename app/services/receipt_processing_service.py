@@ -3,7 +3,7 @@ Receipt processing service - orchestrates receipt scanning, product matching, an
 """
 from typing import List, Dict, Any, Optional, Tuple
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from supabase import Client
 from difflib import SequenceMatcher
 
@@ -11,6 +11,8 @@ from app.services.storage_service import StorageService
 from app.services.receipt_scanner_service import ReceiptScannerService, ReceiptScanResult
 from app.services.product_service import ProductService
 from app.services.receipt_service import ReceiptService
+from app.schemas.product import ProductCreate, ProductCategoryCreate
+from app.schemas.receipt import ReceiptCreate
 
 
 class ReceiptProcessingService:
@@ -46,7 +48,7 @@ class ReceiptProcessingService:
         """
         try:
             # Step 1: Upload image to Supabase Storage
-            print(f"📤 Uploading receipt image for user {user_id}...")
+            print(f"[*] Uploading receipt image for user {user_id}...")
             storage_result = self.storage_service.upload_receipt_image(
                 user_id=user_id,
                 file_data=image_data,
@@ -55,32 +57,31 @@ class ReceiptProcessingService:
             )
             image_url = storage_result["public_url"]
             image_path = storage_result["path"]
-            print(f"✅ Image uploaded: {image_url}")
+            print(f"[+] Image uploaded: {image_url}")
             
             # Step 2: Scan receipt with AI
-            print(f"🤖 Scanning receipt with AI...")
+            print(f"[*] Scanning receipt with AI...")
             scan_result = self.scanner_service.scan_receipt_from_url(image_url)
-            print(f"✅ Found {len(scan_result.items)} items in receipt")
+            print(f"[+] Found {len(scan_result.items)} items in receipt")
             
             # Step 3: Match products and create missing ones
-            print(f"🔍 Matching products...")
+            print(f"[*] Matching products...")
             matched_items = self._match_or_create_products(scan_result)
-            print(f"✅ Processed {len(matched_items)} items")
+            print(f"[+] Processed {len(matched_items)} items")
             
             # Step 4: Create receipt in database (without items yet)
-            print(f"💾 Saving receipt to database...")
-            receipt_data = {
-                "store_name": scan_result.store_name,
-                "purchase_date": scan_result.purchase_date or datetime.utcnow().isoformat(),
-                "total_amount": scan_result.total_amount,
-                "image_url": image_url,
-                "image_path": image_path,
-                "scan_confidence": self._calculate_average_confidence(scan_result)
-            }
+            print(f"[*] Saving receipt to database...")
+            receipt_create = ReceiptCreate(
+                store_name=scan_result.store_name,
+                purchased_at=datetime.fromisoformat(scan_result.purchase_date) if scan_result.purchase_date else datetime.utcnow(),
+                total_amount=scan_result.total_amount,
+                raw_text=scan_result.raw_text,
+                items=[]  # Will add items later after user confirmation
+            )
             
-            receipt = self.receipt_service.create_receipt(user_id, receipt_data)
+            receipt = self.receipt_service.create_receipt(user_id, receipt_create)
             receipt_id = receipt["receipt_id"]
-            print(f"✅ Receipt saved with ID: {receipt_id}")
+            print(f"[+] Receipt saved with ID: {receipt_id}")
             
             # Return data for user confirmation
             return {
@@ -97,7 +98,7 @@ class ReceiptProcessingService:
             }
             
         except Exception as e:
-            print(f"❌ Error processing receipt: {e}")
+            print(f"[-] Error processing receipt: {e}")
             # Try to clean up uploaded image on failure
             try:
                 if 'image_path' in locals():
@@ -151,17 +152,26 @@ class ReceiptProcessingService:
                 ).eq("product_id", product_id).execute()
                 
                 if existing_inventory.data and len(existing_inventory.data) > 0:
-                    # Update existing inventory to FULL
+                    # Update existing inventory - ADD to existing quantity
+                    existing = existing_inventory.data[0]
+                    current_qty = existing.get("estimated_qty", 0) or 0
+                    new_qty = current_qty + quantity
+                    
                     update_result = self.supabase.table("inventory").update({
                         "state": "FULL",
                         "last_source": "RECEIPT",
-                        "estimated_qty": quantity
+                        "estimated_qty": new_qty,
+                        "last_updated_at": datetime.now(timezone.utc).isoformat()
                     }).eq("user_id", str(user_id)).eq("product_id", product_id).execute()
+                    
+                    print(f"[+] Updated inventory: {existing.get('displayed_name')} - {current_qty} + {quantity} = {new_qty}")
                     
                     inventory_updates.append({
                         "product_id": product_id,
                         "action": "updated",
-                        "state": "FULL"
+                        "state": "FULL",
+                        "old_qty": current_qty,
+                        "new_qty": new_qty
                     })
                 else:
                     # Create new inventory item as FULL
@@ -183,7 +193,7 @@ class ReceiptProcessingService:
                         "state": "FULL"
                     })
                 
-                # Create inventory log entry
+                # Create inventory log entry with receipt_item_id linkage
                 log_entry = {
                     "user_id": str(user_id),
                     "product_id": product_id,
@@ -191,16 +201,33 @@ class ReceiptProcessingService:
                     "delta_state": "FULL",
                     "action_confidence": 1.0,
                     "source": "RECEIPT",
-                    "note": f"Added from receipt (quantity: {quantity})"
+                    "receipt_item_id": receipt_item.get("receipt_item_id"),
+                    "note": f"Purchased {quantity} units from receipt",
+                    "delta_qty": quantity  # Add quantity to log
                 }
-                self.supabase.table("inventory_log").insert(log_entry).execute()
+                log_result = self.supabase.table("inventory_log").insert(log_entry).execute()
+                
+                # Update predictor with the purchase data
+                if log_result.data and len(log_result.data) > 0:
+                    log_id = log_result.data[0].get("log_id")
+                    try:
+                        from app.services.predictor_service import PredictorService
+                        predictor_service = PredictorService(self.supabase)
+                        
+                        # Process the log to create predictor state and forecast
+                        predictor_service.process_inventory_log(str(log_id))
+                        
+                        print(f"[+] Predictor updated for product {product_id} with quantity {quantity}")
+                    except Exception as pred_err:
+                        print(f"[!] Warning: Could not update predictor: {pred_err}")
             
-            print(f"✅ Added {len(added_items)} items to inventory with logs")
+            print(f"[+] Added {len(added_items)} items to inventory with logs and predictor updates")
             
             return {
                 "success": True,
                 "receipt_items_created": len(added_items),
-                "inventory_updates": inventory_updates
+                "inventory_updates": inventory_updates,
+                "total_quantity": sum(item.get("quantity", 1.0) for item in confirmed_items)
             }
             
         except Exception as e:
@@ -221,6 +248,7 @@ class ReceiptProcessingService:
         
         # Get all existing products
         existing_products = self.product_service.get_all_products()
+        print(f"[*] Found {len(existing_products)} existing products in database")
         
         for scanned_item in scan_result.items:
             # Try to find matching product
@@ -231,6 +259,13 @@ class ReceiptProcessingService:
             
             if best_match and score >= 0.75:  # 75% similarity threshold
                 # Use existing product
+                # Extract category name (handles nested product_categories)
+                category_name = None
+                if "product_categories" in best_match and isinstance(best_match["product_categories"], dict):
+                    category_name = best_match["product_categories"].get("category_name")
+                elif "category_name" in best_match:
+                    category_name = best_match["category_name"]
+                
                 matched_items.append({
                     "product_id": best_match["product_id"],
                     "product_name": best_match["product_name"],
@@ -238,12 +273,12 @@ class ReceiptProcessingService:
                     "quantity": scanned_item.quantity,
                     "unit_price": scanned_item.unit_price,
                     "total_price": scanned_item.total_price,
-                    "category": best_match.get("category_name"),
+                    "category": category_name,
                     "confidence": scanned_item.confidence,
                     "match_score": score,
                     "is_new_product": False
                 })
-                print(f"  ✓ Matched '{scanned_item.name}' → '{best_match['product_name']}' (score: {score:.2f})")
+                print(f"  [+] Matched '{scanned_item.name}' -> '{best_match['product_name']}' (score: {score:.2f})")
             else:
                 # Create new product
                 print(f"  + Creating new product: '{scanned_item.name}'")
@@ -282,7 +317,14 @@ class ReceiptProcessingService:
         scanned_name_lower = scanned_name.lower().strip()
         
         for product in existing_products:
-            product_name = product["product_name"].lower().strip()
+            # Handle both direct product_name and nested structures
+            if isinstance(product, dict):
+                product_name = product.get("product_name", "").lower().strip()
+            else:
+                product_name = getattr(product, "product_name", "").lower().strip()
+            
+            if not product_name:
+                continue
             
             # Calculate similarity score
             score = SequenceMatcher(None, scanned_name_lower, product_name).ratio()
@@ -306,15 +348,15 @@ class ReceiptProcessingService:
         if scanned_item.category:
             category_id = self._get_or_create_category(scanned_item.category)
         
-        # Create product
-        product_data = {
-            "product_name": scanned_item.name,
-            "category_id": category_id,
-            "default_unit": "units",
-            "is_generic": False
-        }
+        # Create product using schema
+        product_create = ProductCreate(
+            product_name=scanned_item.name,
+            category_id=category_id,
+            default_unit="units",
+            barcode=None
+        )
         
-        return self.product_service.create_product(product_data)
+        return self.product_service.create_product(product_create)
     
     def _get_or_create_category(self, category_name: str) -> Optional[str]:
         """
@@ -327,12 +369,12 @@ class ReceiptProcessingService:
                 if cat["category_name"].lower() == category_name.lower():
                     return cat["category_id"]
             
-            # Create new category
-            new_category = self.product_service.create_category({
-                "category_name": category_name
-            })
+            # Create new category using schema
+            category_create = ProductCategoryCreate(category_name=category_name)
+            new_category = self.product_service.create_category(category_create)
             return new_category["category_id"]
-        except:
+        except Exception as e:
+            print(f"[!] Error creating category: {e}")
             return None
     
     def _calculate_average_confidence(self, scan_result: ReceiptScanResult) -> float:

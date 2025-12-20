@@ -327,6 +327,68 @@ class PredictorService:
         except Exception as e:
             print(f"Error in predictor learning from manual change: {e}")
     
+    def learn_from_purchase(self, user_id, product_id, quantity: float = 1.0, log_id = None) -> None:
+        """
+        Learn from a purchase event (e.g., from receipt scanning).
+        This updates the predictor with the purchase quantity and refreshes forecasts.
+        """
+        try:
+            from uuid import UUID
+            
+            # Convert to UUID if needed
+            if not isinstance(user_id, str):
+                user_id = str(user_id)
+            if not isinstance(product_id, str):
+                product_id = str(product_id)
+            
+            now = datetime.now(timezone.utc)
+            predictor_profile_id, cfg = self._load_cfg_and_profile(user_id)
+            
+            products = dict(self.repo.get_user_inventory_products(user_id))
+            category_id = products.get(product_id)
+            
+            state = self._load_or_init_state(user_id, product_id, predictor_profile_id, cfg, category_id, now)
+            
+            # Create a purchase event with the quantity
+            if PREDICTOR_AVAILABLE:
+                from ema_cycle_predictor import PurchaseEvent
+                
+                purchase_event = PurchaseEvent(
+                    ts=now,
+                    source=PredInventorySource.RECEIPT,
+                    reliability=1.0
+                )
+                
+                # Apply the purchase to update the predictor state
+                state = apply_purchase(state, purchase_event)
+                
+                # Note: The quantity information is stored in inventory.estimated_qty
+                # The predictor will learn consumption patterns over time through feedback events
+                
+                # Generate new forecast
+                mult = self.repo.get_active_habit_multiplier(user_id, product_id, category_id, now)
+                fc = predict(state, now, mult, cfg)
+                state = stamp_last_prediction(state, fc)
+                
+                # Save the updated predictor state
+                self.repo.upsert_predictor_state(
+                    user_id=user_id,
+                    product_id=product_id,
+                    predictor_profile_id=predictor_profile_id,
+                    params=state.to_params_json(),
+                    confidence=fc.confidence,
+                    updated_at=now,
+                )
+                
+                # Store the forecast
+                trigger_log = str(log_id) if log_id else None
+                self.repo.insert_forecast(user_id, product_id, fc, trigger_log_id=trigger_log)
+                
+                print(f"[+] Predictor learned from purchase: product={product_id}, quantity={quantity}, forecast={fc.expected_days_left} days")
+            
+        except Exception as e:
+            print(f"[!] Error in predictor learning from purchase: {e}")
+    
     def update_from_inventory_event(self, user_id: str, product_id: str) -> None:
         """Update predictions for a specific product based on latest inventory log"""
         try:

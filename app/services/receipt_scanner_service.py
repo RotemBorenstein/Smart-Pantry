@@ -69,7 +69,13 @@ class ReceiptScannerService:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
             raise ValueError("OpenAI API key is required")
-        self.client = OpenAI(api_key=self.api_key)
+        try:
+            self.client = OpenAI(api_key=self.api_key)
+        except TypeError:
+            # Fallback for newer OpenAI versions
+            import openai
+            openai.api_key = self.api_key
+            self.client = openai
     
     def scan_receipt_from_url(self, image_url: str) -> ReceiptScanResult:
         """
