@@ -31212,3 +31212,8 @@ node_modules/ws/README.md
 node_modules/ws/wrapper.mjs
 node_modules/yallist/dist/commonjs/index.d.ts
 node_modules/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*.class
